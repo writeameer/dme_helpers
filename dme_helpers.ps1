@@ -30,34 +30,29 @@ namespace DmeTools
             BaseUri= "http://api.dnsmadeeasy.com/V1.2/";
         }
  
-
-        public void AddDmeHeaders() {
-            // Generate DNS Made Easy Hash
-            var rfcDate = Helpers.GetDateTimeRfc822();
-            var dnsMeHash = Helpers.GenerateDnsMeHash(SecretKey, rfcDate);
+        public void AddDmeHeaders() {    
+            var rfcDate = Helpers.GetDateTimeRfc822;
 
             // Add Headers
-            _apiRequest.Headers.Clear();
-            
-            
+            _apiRequest.Headers = new WebHeaderCollection {
+                            {"x-dnsme-apiKey", ApiKey},
+                            {"x-dnsme-requestDate", rfcDate},
+                            {"x-dnsme-hmac", Helpers.GenerateDnsMeHash(SecretKey, rfcDate)},
+                        };
             _apiRequest.ContentType = "application/xml";
             _apiRequest.Accept = "application/xml";
-            _apiRequest.Headers.Add("x-dnsme-apiKey", ApiKey);
-            _apiRequest.Headers.Add("x-dnsme-requestDate", rfcDate);
-            _apiRequest.Headers.Add("x-dnsme-hmac", dnsMeHash);
         }
 
         public HttpWebResponse Get(string url) {
             return DoWebRequest(url, "GET");
         }
 
-        public HttpWebResponse Delete (string url)
-        {
+        public HttpWebResponse Delete (string url) {
             return DoWebRequest(url, "DELETE");
         }
 
-        public HttpWebResponse DoWebRequest (string url, string method) {
-  
+        public HttpWebResponse DoWebRequest (string url, string method)
+        {
             _apiRequest = (HttpWebRequest) Create(BaseUri + url);
             _apiRequest.Method = method;
 
@@ -66,15 +61,16 @@ namespace DmeTools
             return GetApiResponse();
         }
 
-        private HttpWebResponse GetApiResponse()
-        {
+        private HttpWebResponse GetApiResponse() {
             HttpWebResponse response;
+
             try {
-                response = (HttpWebResponse)_apiRequest.GetResponse();
+                response = (HttpWebResponse) _apiRequest.GetResponse();
             }
             catch (WebException webException) {
                 response = (HttpWebResponse)webException.Response;
             }
+
             return response;
         }
 
@@ -98,8 +94,8 @@ namespace DmeTools
 
 
     public class Helpers {
-        public static string GetDateTimeRfc822() {
-            return DateTime.Now.ToUniversalTime().ToString("ddd, dd MMM yyyy HH':'mm':'ss 'GMT'");
+        public static string GetDateTimeRfc822 {
+            get { return DateTime.Now.ToUniversalTime().ToString("ddd, dd MMM yyyy HH':'mm':'ss 'GMT'"); }
         }
 
         public static string GenerateDnsMeHash(string key, string message) {
@@ -120,16 +116,10 @@ namespace DmeTools
         public static XmlDocument GetResponseContentXml(HttpWebResponse response) { 
             var httpContent = new StreamReader(response.GetResponseStream()).ReadToEnd();
 
-            if (String.IsNullOrEmpty(httpContent)) return null;
-
-            var xmlDoc = new XmlDocument();
-            xmlDoc.LoadXml(httpContent);
-            return xmlDoc;
-
+            return String.IsNullOrEmpty(httpContent) ? null : new XmlDocument {InnerXml = httpContent};
         }
     }
 }
-
 "@
 
 	Add-Type -TypeDefinition $code -ReferencedAssemblies System.Xml -Language CSharpVersion3
