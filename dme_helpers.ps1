@@ -8,6 +8,7 @@ function Add-DmeTools()
 $code = @"
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -21,7 +22,7 @@ namespace DmeTools
         public string ApiKey { get; set; }
         public string SecretKey { get; set; }
 
-        public HttpWebRequest ApiRequest;
+        private HttpWebRequest _apiRequest;
 
         public DmeClient (string apiKey, string secretKey)  {
             SecretKey = secretKey;
@@ -36,14 +37,14 @@ namespace DmeTools
             var dnsMeHash = Helpers.GenerateDnsMeHash(SecretKey, rfcDate);
 
             // Add Headers
-            ApiRequest.Headers.Clear();
+            _apiRequest.Headers.Clear();
             
             
-            ApiRequest.ContentType = "application/xml";
-            ApiRequest.Accept = "application/xml";
-            ApiRequest.Headers.Add("x-dnsme-apiKey", ApiKey);
-            ApiRequest.Headers.Add("x-dnsme-requestDate", rfcDate);
-            ApiRequest.Headers.Add("x-dnsme-hmac", dnsMeHash);
+            _apiRequest.ContentType = "application/xml";
+            _apiRequest.Accept = "application/xml";
+            _apiRequest.Headers.Add("x-dnsme-apiKey", ApiKey);
+            _apiRequest.Headers.Add("x-dnsme-requestDate", rfcDate);
+            _apiRequest.Headers.Add("x-dnsme-hmac", dnsMeHash);
         }
 
         public HttpWebResponse Get(string url) {
@@ -56,108 +57,79 @@ namespace DmeTools
         }
 
         public HttpWebResponse DoWebRequest (string url, string method) {
-            HttpWebResponse response;
+  
+            _apiRequest = (HttpWebRequest) Create(BaseUri + url);
+            _apiRequest.Method = method;
 
-            // Create request url
-            ApiRequest = (HttpWebRequest)Create(BaseUri + url);
-            ApiRequest.Method = method;
-            // Add DME Http Headers
             AddDmeHeaders();
 
-            // Make Request 
+            return GetApiResponse();
+        }
+
+        private HttpWebResponse GetApiResponse()
+        {
+            HttpWebResponse response;
             try {
-                response = (HttpWebResponse)ApiRequest.GetResponse();
+                response = (HttpWebResponse)_apiRequest.GetResponse();
             }
             catch (WebException webException) {
                 response = (HttpWebResponse)webException.Response;
             }
-
-            // Return response
             return response;
         }
 
         public HttpWebResponse Post(string url, string postData) {
-            HttpWebResponse response;
 
             // Create request url
-            ApiRequest = (HttpWebRequest)Create(BaseUri + url);
-            ApiRequest.Method = "POST";
+            _apiRequest = (HttpWebRequest) Create(BaseUri + url);
+            _apiRequest.Method = "POST";
             AddDmeHeaders();
 
             // Add POST data
-            byte[] byteArray = Encoding.UTF8.GetBytes(postData);
-            ApiRequest.ContentLength = byteArray.Length;
-            var dataStream = ApiRequest.GetRequestStream();
+            var byteArray = Encoding.UTF8.GetBytes(postData);
+            _apiRequest.ContentLength = byteArray.Length;
+            var dataStream = _apiRequest.GetRequestStream();
             dataStream.Write(byteArray, 0, byteArray.Length);
             dataStream.Close();
 
-            // Make Request 
-            try  {
-                response = (HttpWebResponse)ApiRequest.GetResponse();
-            }
-            catch (WebException webException) {
-                response = (HttpWebResponse)webException.Response;
-            }
-
-            // Return response
-            return response;
+            return GetApiResponse();
         }
     }
 
 
     public class Helpers {
         public static string GetDateTimeRfc822() {
-            // Get date time in GMT
-            DateTime dateTime = DateTime.Now.ToUniversalTime();
-
-            // Format to RFC 822 string
-            string rfcdateTime = dateTime.ToString("ddd, dd MMM yyyy HH':'mm':'ss 'GMT'");
-
-            return rfcdateTime;
+            return DateTime.Now.ToUniversalTime().ToString("ddd, dd MMM yyyy HH':'mm':'ss 'GMT'");
         }
 
         public static string GenerateDnsMeHash(string key, string message) {
             var encoding = new ASCIIEncoding();
 
-            // Encode key,Message
-            byte[] keyBytes = encoding.GetBytes(key);
+            var myhash = new HMACSHA1(encoding.GetBytes(key), false);
+            var hashmessage = myhash.ComputeHash(encoding.GetBytes(message));
 
-            byte[] messageBytes = encoding.GetBytes(message);
-
-            // Create an HMAC  object using the given key
-            var myhash = new HMACSHA1(keyBytes, false);
-
-            // Compute the hash for the given message
-            byte[] hashmessage = myhash.ComputeHash(messageBytes);
-
-            // Convert message to string and return
             return ByteToString(hashmessage);
         }
 
         public static string ByteToString(byte[] byteArray) {
-            var byteString = "";
-
-            foreach (byte byteValue in byteArray)
-                byteString += byteValue.ToString("X2").ToLower();
+            var byteString = byteArray.Aggregate("", (current, byteValue) => current + byteValue.ToString("X2").ToLower());
 
             return (byteString);
         }
 
         public static XmlDocument GetResponseContentXml(HttpWebResponse response) { 
-            var reader = new StreamReader(response.GetResponseStream());
+            var httpContent = new StreamReader(response.GetResponseStream()).ReadToEnd();
+
+            if (String.IsNullOrEmpty(httpContent)) return null;
+
             var xmlDoc = new XmlDocument();
-            var httpContent = reader.ReadToEnd();
+            xmlDoc.LoadXml(httpContent);
+            return xmlDoc;
 
-            if (!String.IsNullOrEmpty(httpContent))
-            {
-                xmlDoc.LoadXml(httpContent);
-				return xmlDoc;
-            }
-
-            return null;
         }
     }
 }
+
 "@
 
 	Add-Type -TypeDefinition $code -ReferencedAssemblies System.Xml -Language CSharpVersion3
