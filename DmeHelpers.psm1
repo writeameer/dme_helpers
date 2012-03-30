@@ -2,8 +2,9 @@
 # Functions
 # ------------------------
 
-function Add-DmeTools()
-{
+$modRoot = Split-Path $script:MyInvocation.MyCommand.Path
+. $modRoot\DmeKeys.ps1
+
 
 $code = @"
 using System;
@@ -27,6 +28,7 @@ namespace DmeTools
             SecretKey = secretKey;
             ApiKey = apiKey;
             BaseUri= "http://api.dnsmadeeasy.com/V1.2/";
+            //BaseUri = "http://api.sandbox.dnsmadeeasy.com/V1.2/";
         }
  
 
@@ -46,20 +48,19 @@ namespace DmeTools
             ApiRequest.Headers.Add("x-dnsme-hmac", dnsMeHash);
         }
 
-        public HttpWebResponse Get(string url) {
-            return DoWebRequest(url, "GET");
+        public HttpWebResponse Get( string url ) {
+            return DoWebRequest( url, "GET" );
+        }
+        
+        public HttpWebResponse Delete( string url ) {
+            return DoWebRequest( url, "DELETE" );
         }
 
-        public HttpWebResponse Delete (string url)
-        {
-            return DoWebRequest(url, "DELETE");
-        }
-
-        public HttpWebResponse DoWebRequest (string url, string method) {
+        public HttpWebResponse DoWebRequest( string url, string method ) {
             HttpWebResponse response;
 
             // Create request url
-            ApiRequest = (HttpWebRequest)Create(BaseUri + url);
+            ApiRequest = (HttpWebRequest)Create( BaseUri + url );
             ApiRequest.Method = method;
             // Add DME Http Headers
             AddDmeHeaders();
@@ -75,13 +76,21 @@ namespace DmeTools
             // Return response
             return response;
         }
-
+        
+        public HttpWebResponse Put(string url, string postData) {
+            return Post(url, postData, "PUT");
+        }
+        
         public HttpWebResponse Post(string url, string postData) {
+            return Post(url, postData, "POST");
+        }
+        
+        public HttpWebResponse Post( string url, string postData, string verb ) {
             HttpWebResponse response;
 
             // Create request url
             ApiRequest = (HttpWebRequest)Create(BaseUri + url);
-            ApiRequest.Method = "POST";
+            ApiRequest.Method = verb;
             AddDmeHeaders();
 
             // Add POST data
@@ -160,11 +169,11 @@ namespace DmeTools
 }
 "@
 
-	Add-Type -TypeDefinition $code -ReferencedAssemblies System.Xml -Language CSharpVersion3
-}
+Add-Type -TypeDefinition $code -ReferencedAssemblies System.Xml -Language CSharpVersion3
 
-function Resolve-Error ($ErrorRecord=$Error[0])
-{
+
+
+function Resolve-Error ( $ErrorRecord=$Error[0] ) {
    $ErrorRecord | Format-List * -Force
    $ErrorRecord.InvocationInfo |Format-List *
    $Exception = $ErrorRecord.Exception
@@ -174,23 +183,36 @@ function Resolve-Error ($ErrorRecord=$Error[0])
    }
 }
 
-function Add-ARecord()
-{
+function Get-DmeDomains() {
+    $dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
+	$httpResponse = $dmeClient.Get("domains")
+	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
+	$httpResponseXml.listWrapper
+}
+
+function Get-DmeDomain() {
 	Param(
-		[parameter(Mandatory=$true)] [string] $apiKey,
-		[parameter(Mandatory=$true)] [string] $secretKey,
-		[parameter(Mandatory=$true)] [string] $domain,
-		[parameter(Mandatory=$true)] [string] $subDomain,
-		[parameter(Mandatory=$true)] [string] $ipAddress
-		
+		[parameter(Mandatory=$true)] [string] $domain
 	)
-	
-	# Create XML for new record
-	$newRecord = "<record><type>A</type><name>$subDomain</name><data>$ipAddress</data><ttl>30</ttl></record>"
+    $dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
+	$httpResponse = $dmeClient.Get("domains/$domain")
+	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
+	$httpResponseXml.domain
+}
+
+function Add-DmeDomain(){
+    Param( 
+            [parameter(Mandatory=$true)] [string] $domain,
+            [string] $gtdEnabled = "false"
+         )
+    
+    # Create XML for new record. 
+    # <nameServers> are not set because they seem to be set by the defaults for the dme account 
+	$newRecord = "<domain><name>$domain</name><gtdEnabled>$gtdEnabled</gtdEnabled</domain>"
 	
 	# Make API Call
-	$dmeClient = New-Object DmeTools.DmeClient($apiKey, $secretKey)
-	$httpResponse = $dmeClient.Post("domains/$domain/records",$newRecord)
+	$dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
+	$httpResponse = $dmeClient.Put("domains/$domain",$newRecord)
 	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
 	$expectedError = "Record with this type, name, and value already exists"
 	
@@ -206,30 +228,95 @@ function Add-ARecord()
 	}
 }
 
-function Get-Records()
-{
+function Get-DmeRecords() {
 	Param(
-		[parameter(Mandatory=$true)] [string] $apiKey,
-		[parameter(Mandatory=$true)] [string] $secretKey,
 		[parameter(Mandatory=$true)] [string] $domain
 	)
 	
-	$dmeClient = New-Object DmeTools.DmeClient($apiKey, $secretKey)
-	$httpResponse = $dmeClient.Get("domains/$domain/records")
+	$dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
+	$httpResponse = $dmeClient.Get( "domains/$domain/records" )
 	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
 	$httpResponseXml.records
 }
 
-function Remove-Record()
-{
+function Get-DmeRecord() {
 	Param(
-		[parameter(Mandatory=$true)] [string] $apiKey,
-		[parameter(Mandatory=$true)] [string] $secretKey,
+		[parameter(Mandatory=$true)] [string] $domain,
+        [parameter(Mandatory=$true)] [string] $dnsId
+	)
+	
+	$dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
+	$httpResponse = $dmeClient.Get( "domains/$domain/records/$dnsId" )
+	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
+	$httpResponseXml.record
+}
+
+function Add-DmeRecord() {
+	Param (
+		    [Parameter(Mandatory=$true,ParameterSetName='ARecord')][switch] $A,
+            [Parameter(Mandatory=$true,ParameterSetName='CNAMERecord')][switch] $CNAME,
+            [Parameter(Mandatory=$true,ParameterSetName='MXRecord')][switch] $MX,
+            
+            [Parameter(Mandatory=$true,ParameterSetName='ARecord')] [string] $ipAddress,
+            
+            [Parameter(Mandatory=$true,ParameterSetName='CNAMERecord')] [string] $target,
+            
+            [Parameter(Mandatory=$true,ParameterSetName='MXRecord')][int] $priority,
+            [Parameter(Mandatory=$true,ParameterSetName='MXRecord')][string] $mailServer,
+            
+            # these are common for all of the above ParameterSets
+            [Parameter(Mandatory=$true)] [string] $domain,
+		    [Parameter(Mandatory=$true)] [string] $name,
+            
+            [int] $ttl = 1800,
+            [string] $gtdLocation = 'default'
+	      )
+	
+    # Create XML for new record, do it by type
+    if ( $A ) {
+        $newRecord = "<record><type>A</type><name>$name</name><data>$ipAddress</data><ttl>$ttl</ttl><gtdLocation>$gtdLocation</gtdLocation></record>"
+    }
+    if ( $CNAME ) {
+        $newRecord = "<record><type>CNAME</type><name>$name</name><data>$Target</data><ttl>$ttl</ttl><gtdLocation>$gtdLocation</gtdLocation></record>"
+    }
+    if ( $MX ) {
+        $newRecord = "<record><type>MX</type><name>$name</name><data>$priority $mailServer</data><ttl>$ttl</ttl><gtdLocation>$gtdLocation</gtdLocation></record>"
+    }
+	
+	# Make API Call
+	$dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
+	$httpResponse = $dmeClient.Post( "domains/$domain/records", $newRecord )
+	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
+	$expectedError = "Record with this type, name, and value already exists"
+	
+	# Check for Errors
+	if ($httpResponse.StatusCode -eq 201) {
+		"Updated Recorded Successfully!"
+	}
+	elseif ($httpResponse.StatusCode -eq 400 -and $httpResponseXml.errors.error.Contains($expectedError)) {
+		"Record already exists, this is an acceptable error..."
+	}
+	else {
+		Resolve-Error $httpResponseXml.errors
+	}
+}
+
+function Update-DmeRecord() {
+    Param(
+		[parameter(Mandatory=$true)] [string] $domain,
+		[parameter(Mandatory=$true)] [string] $dnsId
+	)
+    
+    Write-Host "function not implimented"
+}
+
+function Remove-DmeRecord() {
+	Param(
 		[parameter(Mandatory=$true)] [string] $domain,
 		[parameter(Mandatory=$true)] [string] $dnsId
 	)
 	
-	$dmeClient = New-Object DmeTools.DmeClient($apiKey, $secretKey)
+	$dmeClient = New-Object DmeTools.DmeClient($DmeApiKey, $DmeSecretKey)
 	$httpResponse = $dmeClient.Delete("domains/$domain/records/$dnsId")
 	$httpResponseXml = [DmeTools.Helpers]::GetResponseContentXml($httpResponse)
 	if ($httpResponse.StatusCode -eq 200) {
@@ -240,3 +327,4 @@ function Remove-Record()
 		$httpResponse | fl *
 	}
 }
+
